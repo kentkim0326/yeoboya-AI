@@ -333,6 +333,49 @@ body {
 .send-btn:hover { transform: translateY(-2px); }
 .send-btn:disabled { opacity: .5; transform: none; }
 
+/* ── VOICE (음성) ── */
+.mic-btn {
+  width: 48px; height: 48px; border-radius: 14px;
+  background: var(--white); color: var(--warm1);
+  border: 2px solid var(--warm4); cursor: pointer;
+  font-size: 21px; transition: all .2s; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.mic-btn:hover { border-color: var(--warm2); background: var(--warm5); }
+.mic-btn.listening {
+  background: linear-gradient(135deg, var(--warm1), var(--warm2));
+  color: #fff; border-color: var(--warm1);
+  animation: micPulse 1.2s ease-in-out infinite;
+}
+@keyframes micPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(192,98,42,.5); }
+  50%     { box-shadow: 0 0 0 12px rgba(192,98,42,0); }
+}
+.voice-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+.voice-toggle {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 14px; border-radius: 20px;
+  background: var(--white); border: 1.5px solid var(--warm4);
+  font-size: 13px; font-weight: 600; color: var(--gray);
+  cursor: pointer; transition: all .2s;
+  font-family: 'Noto Sans KR', sans-serif; white-space: nowrap;
+}
+.voice-toggle.on {
+  background: var(--teal-lt); border-color: var(--teal); color: var(--teal);
+}
+.voice-hint { font-size: 12px; color: var(--gray); opacity: .85; }
+.speak-btn {
+  margin-top: 6px; padding: 5px 12px; border-radius: 16px;
+  background: var(--white); border: 1.5px solid var(--warm4);
+  font-size: 12px; color: var(--warm1); cursor: pointer;
+  font-family: 'Noto Sans KR', sans-serif; font-weight: 600;
+  transition: all .2s;
+}
+.speak-btn:hover { background: var(--warm5); border-color: var(--warm2); }
+
 /* quick replies */
 .quick-replies {
   display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 10px;
@@ -527,7 +570,14 @@ body {
 <div class="input-area" id="inputArea" style="display:none">
   <div class="input-inner">
     <div class="quick-replies" id="quickReplies"></div>
+    <div class="voice-bar">
+      <button class="voice-toggle" id="voiceToggle" onclick="toggleVoice()">
+        <span id="voiceIcon">🔇</span><span id="voiceLabel">읽어주기 꺼짐</span>
+      </button>
+      <span class="voice-hint" id="voiceHint">🎤 를 누르고 말씀하세요</span>
+    </div>
     <div class="input-row">
+      <button class="mic-btn" id="micBtn" onclick="toggleListening()" title="말로 하기">🎤</button>
       <textarea class="chat-input" id="chatInput" rows="1"
         placeholder="메시지를 입력하세요..."
         onkeydown="handleKey(event)"
@@ -654,6 +704,14 @@ function startChat() {
   // Quick replies
   updateQuickReplies();
 
+  // 음성 UI 준비 (지원하지 않는 브라우저면 버튼을 숨긴다)
+  updateVoiceUI();
+  if (!ttsAvailable()) document.getElementById('voiceToggle').style.display = 'none';
+  if (!sttAvailable()) {
+    document.getElementById('micBtn').style.display = 'none';
+    document.getElementById('voiceHint').textContent = '이 브라우저는 말하기가 안 됩니다';
+  }
+
   // Initial greeting
   setTimeout(() => {
     const d = DIALECTS[config.dialect];
@@ -709,8 +767,130 @@ function addMessage(role, text, isPremium = false) {
   }
 
   msgs.appendChild(div);
+
+  // 어르신이 다시 들을 수 있도록 말풍선마다 듣기 버튼을 붙인다
+  if (role === 'ai') {
+    const btn = document.createElement('button');
+    btn.className = 'speak-btn';
+    btn.textContent = '🔊 다시 듣기';
+    btn.onclick = () => speak(text);
+    div.querySelector('div:last-child').appendChild(btn);
+    if (voiceOn) speak(text);
+  }
+
   setTimeout(() => div.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
   chatHistory.push({ role: role === 'ai' ? 'assistant' : 'user', content: text });
+}
+
+/* ─────────────────────────────────────────────
+   음성 — 읽어주기(TTS) + 말로 하기(STT)
+   어르신이 키보드를 쓰지 않고도 대화할 수 있게 한다.
+   브라우저 내장 기능이라 API 키도 서버도 필요 없다.
+   ───────────────────────────────────────────── */
+let voiceOn = false;
+let recog = null;
+let listening = false;
+
+// 저장해 둔 설정을 불러온다 (없거나 막혀 있어도 그냥 꺼진 상태로 시작)
+try { voiceOn = localStorage.getItem('yeoboya.voice') === 'on'; } catch (e) {}
+
+function ttsAvailable() { return 'speechSynthesis' in window; }
+
+function sttAvailable() {
+  return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+}
+
+// 이모지·기호를 빼야 읽어줄 때 어색하지 않다
+function cleanForSpeech(text) {
+  return text
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2764}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function speak(text) {
+  if (!ttsAvailable()) return;
+  const said = cleanForSpeech(text);
+  if (!said) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(said);
+  u.lang = 'ko-KR';
+  u.rate = 0.92;   // 어르신이 알아듣기 좋게 조금 느리게
+  u.pitch = 1.0;
+  window.speechSynthesis.speak(u);
+}
+
+function updateVoiceUI() {
+  const btn = document.getElementById('voiceToggle');
+  if (!btn) return;
+  btn.classList.toggle('on', voiceOn);
+  document.getElementById('voiceIcon').textContent = voiceOn ? '🔊' : '🔇';
+  document.getElementById('voiceLabel').textContent = voiceOn ? '읽어주기 켜짐' : '읽어주기 꺼짐';
+}
+
+function toggleVoice() {
+  if (!ttsAvailable()) {
+    alert('이 브라우저는 읽어주기를 지원하지 않습니다.');
+    return;
+  }
+  voiceOn = !voiceOn;
+  try { localStorage.setItem('yeoboya.voice', voiceOn ? 'on' : 'off'); } catch (e) {}
+  updateVoiceUI();
+  if (voiceOn) speak('네, 이제 제가 읽어드릴게요.');
+  else window.speechSynthesis.cancel();
+}
+
+function toggleListening() {
+  if (!sttAvailable()) {
+    alert('이 브라우저는 음성 인식을 지원하지 않습니다.\n크롬이나 엣지에서 열어 주세요.');
+    return;
+  }
+  if (listening) { stopListening(); return; }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recog = new SR();
+  recog.lang = 'ko-KR';
+  recog.interimResults = true;
+  recog.continuous = false;
+
+  const input = document.getElementById('chatInput');
+  const mic = document.getElementById('micBtn');
+  const hint = document.getElementById('voiceHint');
+
+  recog.onstart = () => {
+    listening = true;
+    mic.classList.add('listening');
+    hint.textContent = '듣고 있습니다… 말씀이 끝나면 멈춥니다';
+    window.speechSynthesis && window.speechSynthesis.cancel();
+  };
+
+  recog.onresult = (e) => {
+    let said = '';
+    for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript;
+    input.value = said;
+    autoResize(input);
+  };
+
+  recog.onerror = (e) => {
+    hint.textContent = e.error === 'not-allowed'
+      ? '마이크 사용을 허용해 주세요'
+      : '잘 못 들었습니다. 다시 눌러 주세요';
+  };
+
+  // 말이 끝나면 바로 보낸다 — 어르신이 전송 버튼을 또 찾지 않아도 되게
+  recog.onend = () => {
+    listening = false;
+    mic.classList.remove('listening');
+    hint.textContent = '🎤 를 누르고 말씀하세요';
+    if (input.value.trim()) sendMessage();
+  };
+
+  recog.start();
+}
+
+function stopListening() {
+  if (recog) recog.stop();
 }
 
 function showTyping() {
@@ -1048,6 +1228,8 @@ function localResponse(text, isPremium) {
 }
 
 function resetChat() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  if (listening) stopListening();
   chatHistory = [];
   document.getElementById('messages').innerHTML = '';
   document.getElementById('chatScreen').classList.remove('active');
