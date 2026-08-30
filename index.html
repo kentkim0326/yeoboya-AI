@@ -146,6 +146,27 @@ body {
 }
 .start-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(139,58,42,.4); }
 
+/* ── 고급 설정 (인증키) — 평소엔 접어 둔다 ── */
+.adv-toggle {
+  width: 100%; padding: 11px 14px; margin-bottom: 4px;
+  background: none; border: none; cursor: pointer;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 12.5px; color: var(--gray); font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: color .2s;
+}
+.adv-toggle:hover { color: var(--warm2); }
+.adv-toggle .caret { transition: transform .2s; font-size: 10px; }
+.adv-toggle.open .caret { transform: rotate(180deg); }
+.adv-box {
+  border-top: 1px dashed var(--gray-lt);
+  padding-top: 18px; margin-bottom: 4px;
+}
+.adv-note {
+  font-size: 11.5px; color: var(--gray); line-height: 1.6;
+  margin-bottom: 16px; text-align: center;
+}
+
 /* ── CHAT WRAP ── */
 .chat-wrap {
   display: none;
@@ -494,6 +515,18 @@ body {
         </div>
       </div>
 
+      <!-- 고급 설정 — 인증키는 없어도 작동하므로 접어 둔다.
+           QR 로 처음 들어온 사람이 sk-... 입력칸부터 보면 거기서 멈춘다. -->
+      <button type="button" class="adv-toggle" id="advToggle" onclick="toggleAdvanced()">
+        <span>고급 설정 (인증키 입력)</span><span class="caret">▼</span>
+      </button>
+
+      <div class="adv-box" id="advBox" hidden>
+        <div class="adv-note">
+          인증키가 없어도 대화는 그대로 됩니다.<br>
+          키를 넣으면 답이 더 자연스러워집니다.
+        </div>
+
       <!-- API Key 섹션 -->
       <div class="field" id="basicKeyField">
         <label>OpenAI API 키 (선택 — 없어도 작동)</label>
@@ -516,6 +549,7 @@ body {
           ✨ Grok 프리미엄 모드 — 더 자유로운 부부 감성 대화 지원
         </div>
       </div>
+      </div><!-- /adv-box -->
 
       <button class="start-btn" onclick="startChat()">
         💝 대화 시작하기
@@ -651,6 +685,13 @@ function selectDialect(el) {
   document.querySelectorAll('.d-btn').forEach(b => b.classList.remove('active'));
   el.classList.add('active');
   config.dialect = el.dataset.dialect;
+}
+
+function toggleAdvanced() {
+  const box = document.getElementById('advBox');
+  const btn = document.getElementById('advToggle');
+  box.hidden = !box.hidden;
+  btn.classList.toggle('open', !box.hidden);
 }
 
 function selectMode(el) {
